@@ -48,7 +48,13 @@ func (l *Live) getData() (*gjson.Result, error) {
 	for _, item := range cookies {
 		cookieKVs[item.Name] = item.Value
 	}
-	resp, err := requests.Get(l.Url.String(), live.CommonUserAgent, requests.Cookies(cookieKVs))
+	resp, err := requests.Get(
+		l.Url.String(),
+		live.CommonUserAgent,
+		requests.Cookies(cookieKVs),
+		requests.Headers(map[string]interface{}{
+			"Cache-Control": "no-cache",
+		}))
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +106,13 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 		urls = append(urls, value.String())
 		return true
 	})
+	streamData := gjson.Parse(data.Get("app.initialState.roomStore.roomInfo.room.stream_url.live_core_sdk_data.pull_data.stream_data").String())
+	if streamData.Exists() {
+		url := streamData.Get("data.origin.main.flv")
+		if url.Exists() {
+			urls = append([]string{url.String()}, urls...)
+		}
+	}
 	return utils.GenUrls(urls...)
 }
 

@@ -2,14 +2,29 @@ package flag
 
 import (
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/alecthomas/kingpin"
+	"github.com/joho/godotenv"
 
-	"github.com/hr3lxphr6j/bililive-go/src/configs"
-	"github.com/hr3lxphr6j/bililive-go/src/consts"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/configs"
+	"github.com/bililive-go/bililive-go/src/consts"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 )
+
+func init() {
+	// 尝试从当前工作目录加载 .env.local 文件（用于本地开发测试）
+	// 如果文件不存在则忽略错误
+	// 使用 .env.local 与 Playwright 配置保持一致
+	_ = godotenv.Load(".env.local")
+
+	// 如果当前目录没有 .env.local，尝试从可执行文件所在目录加载
+	if exePath, err := os.Executable(); err == nil {
+		envPath := filepath.Join(filepath.Dir(exePath), ".env.local")
+		_ = godotenv.Load(envPath)
+	}
+}
 
 var (
 	app = kingpin.New(consts.AppName, "A command-line live stream save tools.").Version(consts.AppVersion)
@@ -25,6 +40,10 @@ var (
 	NativeFlvParser = app.Flag("native-flv-parser", "use native flv parser").Default("false").Bool()
 	OutputFileTmpl  = app.Flag("output-file-tmpl", "output file name template").Default("").String()
 	SplitStrategies = app.Flag("split-strategies", "video split strategies, support\"on_room_name_changed\", \"max_duration:(duration)\"").Strings()
+	// 同步（仅保留）容器内置的外部工具到目标目录，然后退出（用于 Docker 镜像构建阶段）
+	SyncBuiltInToolsToPath = app.Flag("sync-built-in-tools-to-path", "Sync built-in tools into the target folder (remove others), then exit.").Default("").String()
+	// 跳过 Launcher 检查，强制使用当前二进制运行（用于本地开发调试，等同于设置 BILILIVE_LAUNCHER=1 环境变量）
+	NoLauncher = app.Flag("no-launcher", "跳过 Launcher 版本检查，直接运行当前编译的版本（开发调试用）").Default("false").Bool()
 )
 
 func init() {

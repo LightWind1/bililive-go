@@ -162,8 +162,42 @@ node_modules
 #bililive-go logs
 *.log
 
-#nodenv
-.node-version
-
 #vscode
-.vscode
+.vscode/*
+!.vscode/*.example.json
+
+# AI agent 临时文件（保留 rules 目录）
+.agent/*
+!.agent/rules/
+
+!src/cmd/build/
+.appdata/
+external_tools/
+coverage.txt
+.local
+
+# 本地自动升级测试配置（不提交到仓库，使用 .example.json 作为模板）
+test/launcher-config-local.json
+
+# Playwright E2E 测试
+/test-results/
+/test-results-ffmpeg/
+/playwright-report/
+/playwright-report-ffmpeg/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+.env.local
+
+# E2E 测试输出（录制文件等）
+/test-output/
+test-output*appdata/
+
+# npm 锁文件（项目统一使用 yarn）
+package-lock.json
+
+# CI Docker 构建临时目录（保留 .gitkeep 确保目录结构存在）
+docker-context/bin/*
+!docker-context/bin/.gitkeep
+docker-context/tools/*
+!docker-context/tools/.gitkeep

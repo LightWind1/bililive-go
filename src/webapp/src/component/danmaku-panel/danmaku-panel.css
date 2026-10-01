@@ -1,0 +1,382 @@
+.dm-panel {
+  position: relative;
+  padding: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* 顶部栏：筛选 + 统计 */
+.dm-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  background: #1a1a1a;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 筛选按钮组 */
+.dm-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dm-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+  border: none;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.dm-filter-chip:hover {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dm-filter-chip.active {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 复选框 */
+.dm-filter-checkbox {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  background: transparent;
+}
+
+.dm-filter-chip.active .dm-filter-checkbox {
+  border-color: var(--chip-color, #69b1ff);
+  background: var(--chip-color, #69b1ff);
+}
+
+.dm-filter-label {
+  line-height: 1;
+}
+
+/* 统计区 */
+.dm-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.dm-stat-count {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.dm-stat-count strong {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+.dm-stat-amount {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+/* 右侧操作 */
+.dm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 自动滚动开关 */
+.dm-scroll-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  user-select: none;
+  border: 1px solid;
+}
+
+.dm-scroll-toggle.on {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.25);
+}
+
+.dm-scroll-toggle.off {
+  color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.dm-scroll-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 弹幕列表容器 */
+.dm-list-container {
+  height: clamp(300px, 50vh, 600px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #000;
+  width: 0;
+  min-width: 100%;
+}
+
+/* 弹幕项 */
+.dm-item {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  box-sizing: border-box;
+  transition: background 0.15s ease;
+}
+
+.dm-item:hover {
+  z-index: 11;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dm-line {
+  font-size: 14px;
+  line-height: 32px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  gap: 0;
+  width: 100%;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* 弹幕类型样式 */
+.dm-danmaku {
+  background: transparent;
+}
+
+.dm-gift {
+  background: transparent;
+}
+
+.dm-super-chat {
+  background: transparent;
+}
+
+.dm-guard {
+  background: transparent;
+}
+
+/* 时间戳 */
+.dm-time {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 14px;
+  margin-right: 8px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  flex-shrink: 0;
+}
+
+/* 用户名 */
+.dm-username {
+  color: #60a5fa;
+  font-weight: 600;
+  margin-right: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dm-colon {
+  color: #60a5fa;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+/* 弹幕内容 */
+.dm-content {
+  color: rgba(255, 255, 255, 0.9);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 礼物/SC/舰长消息文字颜色 */
+
+/* 价格徽章 */
+.dm-price-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dm-price-badge.gift-price {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.dm-price-badge.sc-price {
+  background: rgba(251, 146, 60, 0.25);
+  color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.dm-price-badge.guard-price {
+  background: rgba(168, 85, 247, 0.25);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+/* Tag 样式（保留兼容） */
+.dm-line .ant-tag {
+  border: none;
+  font-size: 14px;
+  line-height: 22px;
+  padding: 0 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+}
+
+.dm-gift .ant-tag-gold {
+  background: rgba(250, 173, 20, 0.35);
+  color: #fbbf24;
+}
+
+.dm-super-chat .ant-tag-orange {
+  background: rgba(250, 140, 22, 0.35);
+  color: #fb923c;
+}
+
+.dm-guard .ant-tag-purple {
+  background: rgba(179, 127, 235, 0.35);
+  color: #c084fc;
+}
+
+/* 空状态 */
+.dm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* 状态栏 */
+.dm-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #1a1a1a;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.dm-limit-hint {
+  color: #fbbf24;
+}
+
+.dm-autoscroll-hint {
+  color: #4ade80;
+  margin-left: auto;
+}
+
+/* 新消息提示 */
+.dm-new-message-hint {
+  position: sticky;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: fit-content;
+  margin: 0 auto;
+  padding: 4px 14px;
+  background: rgba(105, 177, 255, 0.9);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 14px;
+  cursor: pointer;
+  z-index: 12;
+  transition: background 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.dm-new-message-hint:hover {
+  background: rgba(105, 177, 255, 1);
+}
+
+/* 滚动条 */
+.dm-list-container::-webkit-scrollbar {
+  width: 5px;
+}
+
+.dm-list-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dm-list-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.dm-list-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Tooltip 暗色适配 */
+.dm-tooltip .ant-tooltip-inner {
+  background: rgba(0, 0, 0, 0.85);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  max-width: 400px;
+  word-break: break-all;
+}
+
+.dm-tooltip .ant-tooltip-arrow::before {
+  background: rgba(0, 0, 0, 0.85);
+}

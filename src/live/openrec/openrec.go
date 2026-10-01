@@ -5,11 +5,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/hr3lxphr6j/requests"
-
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 )
 
 const (
@@ -27,17 +25,18 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
 func (l *Live) GetInfo() (info *live.Info, err error) {
-	resp, err := requests.Get(l.Url.String(), live.CommonUserAgent)
+	resp, err := l.RequestSession.Get(l.Url.String(), live.CommonUserAgent)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}
@@ -71,10 +70,11 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 }
 
 func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
-	resp, err := requests.Get(l.Url.String(), live.CommonUserAgent)
+	resp, err := l.RequestSession.Get(l.Url.String(), live.CommonUserAgent)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}

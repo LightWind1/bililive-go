@@ -1,23 +1,24 @@
 package instance
 
 import (
+	"context"
 	"sync"
 
+	"github.com/bililive-go/bililive-go/src/interfaces"
 	"github.com/bluele/gcache"
-
-	"github.com/hr3lxphr6j/bililive-go/src/configs"
-	"github.com/hr3lxphr6j/bililive-go/src/interfaces"
-	"github.com/hr3lxphr6j/bililive-go/src/live"
 )
 
 type Instance struct {
-	WaitGroup       sync.WaitGroup
-	Config          *configs.Config
-	Logger          *interfaces.Logger
-	Lives           map[live.ID]live.Live
-	Cache           gcache.Cache
-	Server          interfaces.Module
-	EventDispatcher interfaces.Module
-	ListenerManager interfaces.Module
-	RecorderManager interfaces.Module
+	Ctx              context.Context   // 应用级 context，不随 HTTP 请求结束而取消
+	WaitGroup        sync.WaitGroup
+	Lives            LiveMap
+	Cache            gcache.Cache
+	Server           interfaces.Module
+	EventDispatcher  interfaces.Module
+	ListenerManager  interfaces.Module
+	RecorderManager  interfaces.Module
+	PipelineManager  interfaces.Module // 后处理管道管理器
+	LiveStateManager interface{}       // 直播间状态持久化管理器 (*livestate.Manager)
+	LiveStateStore   interface{}       // 直播间状态存储 (livestate.Store)
+	IOStatsModule    interfaces.Module // IO 统计模块 (*iostats.Module)
 }

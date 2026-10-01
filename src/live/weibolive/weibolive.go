@@ -3,16 +3,15 @@ package weibolive
 import (
 	"net/http"
 	"net/url"
-	"strings"
 	"regexp"
-	"fmt"
+	"strings"
 
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
 )
 
 const (
@@ -28,9 +27,9 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
@@ -47,14 +46,15 @@ func (l *Live) getRoomInfo() ([]byte, error) {
 	roomid := paths[5]
 	l.roomID = roomid
 
-	resp, err := requests.Get(liveurl+roomid,
+	resp, err := l.RequestSession.Get(liveurl+roomid,
 		live.CommonUserAgent,
-		requests.Headers(map[string]interface{}{
+		requests.Headers(map[string]any{
 			"Referer": l.Url,
 		}))
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}
@@ -87,7 +87,7 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 	}
 
 	streamurl := gjson.GetBytes(body, "data.live_origin_flv_url").String()
-    queryParams := l.Url.Query()
+	queryParams := l.Url.Query()
 	quality := queryParams.Get("q")
 	if quality != "" {
 		targetQuality := "_wb" + quality + "avc.flv"
@@ -95,11 +95,11 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 		if err == nil && reg.MatchString(streamurl) {
 			streamurl = reg.ReplaceAllString(streamurl, targetQuality)
 		} else {
-			streamurl = strings.Replace(streamurl, ".flv", targetQuality, -1)
+			streamurl = strings.ReplaceAll(streamurl, ".flv", targetQuality)
 		}
-		fmt.Println("weibo stream quality fixed: " + streamurl)
+		l.GetLogger().Info("weibo stream quality fixed: " + streamurl)
 	}
-	
+
 	return utils.GenUrls(streamurl)
 }
 

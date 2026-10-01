@@ -13,9 +13,9 @@ import (
 	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 )
 
 const (
@@ -83,9 +83,9 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
@@ -114,10 +114,11 @@ func (l *Live) getRoomInfo() ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	resp, err := requests.Get(buf.String())
+	resp, err := l.RequestSession.Get(buf.String())
 	if err != nil {
 		return nil, false, err
 	}
+	defer resp.Body.Close()
 
 	/**
 	未开播主播 roomInitUrl 接口 返回 {"resultCode":0,"data":null}
@@ -133,14 +134,18 @@ func (l *Live) getRoomInfo() ([]byte, bool, error) {
 	}
 	if gjson.Get(string(body), "data").Type == gjson.Null {
 		//返回无data，则停播，从其他接口获取直播间信息
-		resp, err = requests.Get(roomInitBakUrl + roomid)
+		resp, err = l.RequestSession.Get(roomInitBakUrl + roomid)
 		if err != nil {
 			return nil, false, err
 		}
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return nil, false, live.ErrRoomNotExist
 		}
 		body, err = resp.Bytes()
+		if err != nil {
+			return nil, false, err
+		}
 		return body, false, nil
 	}
 
@@ -187,10 +192,11 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := requests.Post(liveurl.String(), requests.Body(strings.NewReader(rawbuf.String())))
+	resp, err := l.RequestSession.Post(liveurl.String(), requests.Body(strings.NewReader(rawbuf.String())))
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrInternalError
 	}

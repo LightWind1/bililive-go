@@ -1,4 +1,4 @@
-//go:generate mockgen -package mock -destination mock/mock.go github.com/hr3lxphr6j/bililive-go/src/pkg/events Dispatcher
+//go:generate go run go.uber.org/mock/mockgen -package mock -destination mock/mock.go github.com/bililive-go/bililive-go/src/pkg/events Dispatcher
 package events
 
 import (
@@ -6,8 +6,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hr3lxphr6j/bililive-go/src/instance"
-	"github.com/hr3lxphr6j/bililive-go/src/interfaces"
+	"github.com/bililive-go/bililive-go/src/instance"
+	"github.com/bililive-go/bililive-go/src/interfaces"
+	bilisentry "github.com/bililive-go/bililive-go/src/pkg/sentry"
 )
 
 func NewDispatcher(ctx context.Context) Dispatcher {
@@ -27,6 +28,9 @@ type Dispatcher interface {
 	RemoveEventListener(eventType EventType, listener *EventListener)
 	RemoveAllEventListener(eventType EventType)
 	DispatchEvent(event *Event)
+	// DispatchEventSync 在当前 goroutine 中按注册顺序执行事件处理器。
+	// 仅应用于调用方必须等待状态交接完成后才能继续的场景；普通事件仍应使用 DispatchEvent。
+	DispatchEventSync(event *Event)
 }
 
 type dispatcher struct {
@@ -76,24 +80,49 @@ func (e *dispatcher) RemoveAllEventListener(eventType EventType) {
 	e.saver = make(map[EventType]*list.List)
 }
 
-func (e *dispatcher) DispatchEvent(event *Event) {
+func (e *dispatcher) snapshotListeners(event *Event) []*EventListener {
 	if event == nil {
-		return
+		return nil
 	}
 	e.RLock()
 	listeners, ok := e.saver[event.Type]
 	if !ok || listeners == nil {
 		e.RUnlock()
-		return
+		return nil
 	}
-	hs := make([]*EventListener, 0)
+	hs := make([]*EventListener, 0, listeners.Len())
 	for e := listeners.Front(); e != nil; e = e.Next() {
 		hs = append(hs, e.Value.(*EventListener))
 	}
 	e.RUnlock()
-	go func() {
-		for _, h := range hs {
-			h.Handler(event)
-		}
+	return hs
+}
+
+func dispatchToListeners(event *Event, listeners []*EventListener) {
+	for _, listener := range listeners {
+		listener.Handler(event)
+	}
+}
+
+func (e *dispatcher) DispatchEvent(event *Event) {
+	hs := e.snapshotListeners(event)
+	if len(hs) == 0 {
+		return
+	}
+	bilisentry.Go(func() {
+		dispatchToListeners(event, hs)
+	})
+}
+
+func (e *dispatcher) DispatchEventSync(event *Event) {
+	hs := e.snapshotListeners(event)
+	if len(hs) == 0 {
+		return
+	}
+
+	// 与异步派发保持相同的 panic 隔离语义，避免单个事件处理器打断调用方。
+	func() {
+		defer bilisentry.Recover()
+		dispatchToListeners(event, hs)
 	}()
 }

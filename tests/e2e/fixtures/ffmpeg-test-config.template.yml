@@ -1,0 +1,71 @@
+# bililive-go 配置 — FFmpeg e2e 测试专用
+# ffmpeg_path 留空 + 环境变量 BILILIVE_IGNORE_SYSTEM_FFMPEG=1（由 playwright 配置注入），
+# 确保程序走 remotetools 下载路径（CI 机器普遍预装 ffmpeg，无法用真实 PATH 模拟无 FFmpeg 环境；
+# 配置无效路径也不行——该场景下程序会直接报 not_found 提示修正配置，不会去下载）
+rpc:
+  enable: true
+  bind: 127.0.0.1:8085
+debug: false
+interval: 5
+out_put_path: ./test-output
+ffmpeg_path: ""
+log:
+  out_put_folder: ./
+  save_last_log: true
+  save_every_log: false
+  rotate_days: 7
+feature:
+  remove_symbol_other_character: false
+out_put_tmpl: '{{.RoomName}}-{{.HostName}}/{{ now | date "2006-01-02 15-04-05" }}.flv'
+video_split_strategies:
+  on_room_name_changed: false
+  max_duration: 0s
+  max_file_size: "0"
+on_record_finished:
+  convert_to_mp4: false
+  delete_flv_after_convert: false
+  custom_commandline: ""
+  fix_flv_at_first: true
+  save_cover: false
+  cloud_upload:
+    enable: false
+    storage_name: ""
+    upload_path_tmpl: ""
+    delete_after_upload: false
+  upload_timing: after_process
+timeout_in_us: 60000000
+live_rooms: []
+cookies: {}
+notify:
+  telegram:
+    enable: false
+    withNotification: true
+    botToken: ""
+    chatID: ""
+  email:
+    enable: false
+    smtpHost: smtp.qq.com
+    smtpPort: 465
+    senderEmail: ""
+    senderPassword: ""
+    recipientEmail: ""
+  ntfy:
+    enable: false
+    URL: ""
+    token: ""
+    tag: ""
+app_data_path: test-output/.appdata-ffmpeg-e2e
+read_only_tool_folder: ""
+tool_root_folder: ""
+task_queue:
+  max_concurrent: 3
+sentry:
+  enable: false
+proxy:
+  enable: false
+  url: ""
+update:
+  auto_check: false
+  check_interval_hours: 6
+  auto_download: false
+  include_prerelease: false

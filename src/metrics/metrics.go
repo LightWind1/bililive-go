@@ -9,11 +9,12 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/hr3lxphr6j/bililive-go/src/instance"
-	"github.com/hr3lxphr6j/bililive-go/src/interfaces"
-	"github.com/hr3lxphr6j/bililive-go/src/listeners"
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/recorders"
+	"github.com/bililive-go/bililive-go/src/instance"
+	"github.com/bililive-go/bililive-go/src/interfaces"
+	"github.com/bililive-go/bililive-go/src/listeners"
+	"github.com/bililive-go/bililive-go/src/live"
+	bilisentry "github.com/bililive-go/bililive-go/src/pkg/sentry"
+	"github.com/bililive-go/bililive-go/src/recorders"
 )
 
 var (
@@ -56,9 +57,9 @@ func bool2float64(b bool) float64 {
 
 func (c collector) Collect(ch chan<- prometheus.Metric) {
 	wg := sync.WaitGroup{}
-	for id, l := range c.inst.Lives {
+	for id, l := range c.inst.Lives.Snapshot() {
 		wg.Add(1)
-		go func(id live.ID, l live.Live) {
+		bilisentry.Go(func() {
 			defer wg.Done()
 			obj, err := c.inst.Cache.Get(l)
 			if err != nil {
@@ -73,20 +74,22 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 
 			if info.Status && listening {
 				ch <- prometheus.MustNewConstMetric(
-					liveDurationSeconds, prometheus.CounterValue, time.Now().Sub(l.GetLastStartTime()).Seconds(),
+					liveDurationSeconds, prometheus.CounterValue, time.Since(l.GetLastStartTime()).Seconds(),
 					string(id), l.GetRawUrl(), info.HostName, info.RoomName, strconv.FormatInt(info.Live.GetLastStartTime().Unix(), 10),
 				)
 
 				if r, err := c.inst.RecorderManager.(recorders.Manager).GetRecorder(context.Background(), id); err == nil {
 					if status, err := r.GetStatus(); err == nil {
-						if value, err := strconv.ParseFloat(status["total_size"], 64); err == nil {
-							ch <- prometheus.MustNewConstMetric(recorderTotalBytes, prometheus.CounterValue, value,
-								string(id), l.GetRawUrl(), info.HostName, info.RoomName)
+						if totalSize, ok := status["total_size"].(string); ok {
+							if value, err := strconv.ParseFloat(totalSize, 64); err == nil {
+								ch <- prometheus.MustNewConstMetric(recorderTotalBytes, prometheus.CounterValue, value,
+									string(id), l.GetRawUrl(), info.HostName, info.RoomName)
+							}
 						}
 					}
 				}
 			}
-		}(id, l)
+		})
 	}
 	wg.Wait()
 }

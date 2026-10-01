@@ -7,12 +7,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 )
 
 const (
@@ -28,9 +27,9 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
@@ -39,10 +38,11 @@ type Live struct {
 }
 
 func (l *Live) requestRoomInfo() ([]byte, error) {
-	resp, err := requests.Get(fmt.Sprintf(apiUrl, strings.Split(l.Url.Path, "/")[1]), live.CommonUserAgent)
+	resp, err := l.RequestSession.Get(fmt.Sprintf(apiUrl, strings.Split(l.Url.Path, "/")[1]), live.CommonUserAgent)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}

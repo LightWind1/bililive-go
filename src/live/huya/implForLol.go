@@ -14,8 +14,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 )
@@ -50,10 +50,11 @@ func GetInfo_ForLol(l *Live, body string) (info *live.Info, err error) {
 }
 
 func GetStreamInfos_ForLol(l *Live) (infos []*live.StreamUrlInfo, err error) {
-	resp, err := requests.Get(l.Url.String(), requests.UserAgent(uaForLol))
+	resp, err := l.RequestSession.Get(l.Url.String(), requests.UserAgent(uaForLol))
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d", resp.StatusCode)
 	}

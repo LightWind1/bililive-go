@@ -1,0 +1,163 @@
+package configs
+
+import "gopkg.in/yaml.v3"
+
+// DecorateConfigNode 将硬编码的中文注释注入到配置节点树中。
+func DecorateConfigNode(node *yaml.Node) {
+	if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
+		return
+	}
+	root := node.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+
+	root.HeadComment = `# 这个配置文件内的注释是自动生成的，请不要手动修改。
+# 需要修改注释时，请在 src/configs/config_comments.go 文件内修改。`
+
+	setFieldLineComment(root, "ffmpeg_path", "# 如果此项为空，就自动在环境变量里寻找")
+
+	setFieldComment(root, "out_put_tmpl",
+		`# '{{ .Live.GetPlatformCNName }}/{{ .HostName | filenameFilter }}/[{{ now | date "2006-01-02 15-04-05"}}][{{ .HostName | filenameFilter }}][{{ .RoomName | filenameFilter }}].flv'
+# ./平台名称/主播名字/[时间戳][主播名字][房间名字].flv
+# https://github.com/bililive-go/bililive-go/wiki/More-Tips`, "")
+
+	splitNode := findNode(root, "video_split_strategies")
+	if splitNode != nil {
+		setFieldComment(splitNode, "max_file_size",
+			`# 仅在使用 ffmpeg 或 bililive-recorder 下载器时生效
+# 支持可读格式，如: 500MB, 1GB, 1.5GB, 1024KB
+# 也支持纯数字（视为字节），如: 1073741824
+# 有效值为正数，默认值 0 为不限制
+# 负数为非法值，程序会输出 log 提醒，并无视所设定的数值`, "")
+	}
+
+	setFieldHeadComment(root, "notify", "# 通知服务配置")
+	notifyNode := findNode(root, "notify")
+	if notifyNode != nil {
+		setFieldComment(notifyNode, "send_recording_summary",
+			`# 录制结束后是否推送录制文件摘要（文件数量、文件名、大小）
+# 需要至少开启一个通知渠道（Telegram/Email/Bark）才会生效`, "")
+		telegram := findNode(notifyNode, "telegram")
+		if telegram != nil {
+			setFieldComment(telegram, "enable", "# 是否开启Telegram通知", "")
+			setFieldComment(telegram, "withNotification", "# 是否启用声音通知", "")
+			setFieldComment(telegram, "botToken", "# Telegram机器人Token", "")
+			setFieldComment(telegram, "chatID", "# Telegram聊天ID", "")
+		}
+		email := findNode(notifyNode, "email")
+		if email != nil {
+			setFieldComment(email, "enable", "# 是否开启Email通知", "")
+			setFieldComment(email, "smtpHost", "# SMTP服务器地址 (例如: smtp.gmail.com, smtp.qq.com等)", "")
+			setFieldComment(email, "smtpPort", "# SMTP服务器端口 (常用端口: 25, 465, 587)", "")
+			setFieldComment(email, "senderEmail", "# 发送者邮箱地址", "")
+			setFieldComment(email, "senderPassword", "# 发送者邮箱授权码或应用专用密码", "")
+			setFieldComment(email, "recipientEmail", "# 接收者邮箱地址 ", "")
+		}
+		barkNode := findNode(notifyNode, "bark")
+		if barkNode != nil {
+			setFieldComment(barkNode, "enable", "# 是否开启Bark通知(iOS)", "")
+			setFieldComment(barkNode, "serverURL", "# Bark服务器地址，默认 https://api.day.app，支持自建", "")
+			setFieldComment(barkNode, "deviceKey", "# 设备推送密钥（在Bark App首页获取）", "")
+			setFieldComment(barkNode, "sound", "# 推送铃声（可选，如 alarm、birdsong、glass 等）", "")
+			setFieldComment(barkNode, "group", "# 通知分组名称（可选）", "")
+			setFieldComment(barkNode, "icon", "# 自定义图标URL（可选）", "")
+			setFieldComment(barkNode, "level", "# 通知级别（可选）: active/timeSensitive/passive/critical", "")
+		}
+	}
+
+	// 特殊处理 live_rooms
+	// 注释需要出现在 live_rooms 列表的第一个元素上方
+	liveRoomsNode := findNode(root, "live_rooms")
+	if liveRoomsNode != nil && liveRoomsNode.Kind == yaml.SequenceNode && len(liveRoomsNode.Content) > 0 {
+		firstItem := liveRoomsNode.Content[0]
+		firstItem.HeadComment = `# quality参数目前仅B站启用，默认为0
+# (B站)0代表原画PRO(HEVC)优先, 其他数值为原画(AVC)
+# 原画PRO会保存为.ts文件, 原画为.flv
+# HEVC相比AVC体积更小, 减少35%体积, 画质相当, 但是B站转码有时候会崩`
+	}
+
+	// Proxy 代理配置注释
+	setFieldHeadComment(root, "proxy", "# 代理配置（支持 HTTP 和 SOCKS5 代理）")
+	proxyNode := findNode(root, "proxy")
+	if proxyNode != nil {
+		setFieldComment(proxyNode, "enable",
+			`# 通用代理开关
+# false: 使用系统环境变量 (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+# true: 使用下方配置的代理地址`, "")
+		setFieldComment(proxyNode, "url",
+			`# 通用代理地址，支持以下格式：
+# HTTP 代理: http://host:port 或 http://user:pass@host:port
+# SOCKS5 代理: socks5://host:port 或 socks5://user:pass@host:port
+# 示例: socks5://127.0.0.1:1080 (翻墙软件常用端口)
+# 此地址同时用于信息获取和下载，除非下方单独配置了专用代理`, "")
+		setFieldComment(proxyNode, "info_proxy",
+			`# 信息获取专用代理（可选，覆盖通用代理设置）
+# 仅用于获取直播间信息、平台 API 请求等
+# 注意：通过 bililive-tools 间接获取信息的平台（如抖音）暂不受此代理设置影响
+# 如果只想为信息获取使用代理（例如解决临时 IP 封禁），可以只配置此项`, "")
+		setFieldComment(proxyNode, "download_proxy",
+			`# 下载专用代理（可选，覆盖通用代理设置）
+# 仅用于下载直播流数据
+# 如果不想让下载流量走代理，可以将此项的 enable 设为 false`, "")
+	}
+
+	// Feature 功能配置注释
+	featureNode := findNode(root, "feature")
+	if featureNode != nil {
+		setFieldComment(featureNode, "downloader_type",
+			`# 下载器类型：ffmpeg（默认）、native（内置 FLV 解析器）、bililive-recorder
+# ffmpeg: 使用 FFmpeg 录制，支持所有流格式，需要安装 FFmpeg
+# native: 使用内置 FLV 解析器，仅支持 FLV 流，无需额外依赖
+# bililive-recorder: 使用 BililiveRecorder CLI，仅支持 FLV 流`, "")
+		setFieldComment(featureNode, "enable_flv_proxy_segment",
+			`# FLV 代理分段功能（仅对 FFmpeg 下载器生效）
+# 当检测到视频编码参数变化（新的 SPS/PPS）时，会主动断开连接触发 FFmpeg 分段
+# 这可以避免因编码参数变化导致的花屏问题
+# 注意：启用后会在本地启动一个 FLV 代理服务器，FFmpeg 从代理读取流`, "")
+	}
+}
+
+func findNode(mapNode *yaml.Node, key string) *yaml.Node {
+	for i := 0; i < len(mapNode.Content); i += 2 {
+		if mapNode.Content[i].Value == key {
+			return mapNode.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func setFieldComment(mapNode *yaml.Node, key, headComment, lineComment string) {
+	for i := 0; i < len(mapNode.Content); i += 2 {
+		k := mapNode.Content[i]
+		if k.Value == key {
+			if headComment != "" {
+				k.HeadComment = headComment
+			}
+			if lineComment != "" {
+				k.LineComment = lineComment
+			}
+			return
+		}
+	}
+}
+
+func setFieldLineComment(mapNode *yaml.Node, key, lineComment string) {
+	for i := 0; i < len(mapNode.Content); i += 2 {
+		k := mapNode.Content[i]
+		if k.Value == key {
+			k.LineComment = lineComment
+			return
+		}
+	}
+}
+
+func setFieldHeadComment(mapNode *yaml.Node, key, headComment string) {
+	for i := 0; i < len(mapNode.Content); i += 2 {
+		k := mapNode.Content[i]
+		if k.Value == key {
+			k.HeadComment = headComment
+			return
+		}
+	}
+}

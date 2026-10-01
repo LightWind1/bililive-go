@@ -7,9 +7,9 @@ import (
 	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 )
 
 const (
@@ -27,9 +27,9 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
@@ -47,10 +47,11 @@ func (l *Live) getUid() (string, error) {
 	if uid = utils.Match1(`https?:\/\/www.huajiao.com\/user\/(\d+)`, l.GetRawUrl()); uid != "" {
 		// nothing to do
 	} else if liveId := utils.Match1(`https?:\/\/www.huajiao.com\/l\/(\d+)`, l.GetRawUrl()); liveId != "" {
-		resp, err := requests.Get(l.GetRawUrl(), live.CommonUserAgent)
+		resp, err := l.RequestSession.Get(l.GetRawUrl(), live.CommonUserAgent)
 		if err != nil {
 			return "", err
 		}
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return "", live.ErrRoomNotExist
 		}
@@ -73,10 +74,11 @@ func (l *Live) getUid() (string, error) {
 }
 
 func (l *Live) getNickname(uid string) (string, error) {
-	resp, err := requests.Get(apiUserInfo, live.CommonUserAgent, requests.Query("fmt", "json"), requests.Query("uid", uid))
+	resp, err := l.RequestSession.Get(apiUserInfo, live.CommonUserAgent, requests.Query("fmt", "json"), requests.Query("uid", uid))
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", live.ErrRoomNotExist
 	}
@@ -91,7 +93,7 @@ func (l *Live) getNickname(uid string) (string, error) {
 }
 
 func (l *Live) getLiveFeeds(uid string) ([]gjson.Result, error) {
-	resp, err := requests.Get(apiUserFeeds, live.CommonUserAgent, requests.Query("fmt", "json"), requests.Query("uid", uid))
+	resp, err := l.RequestSession.Get(apiUserFeeds, live.CommonUserAgent, requests.Query("fmt", "json"), requests.Query("uid", uid))
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +152,7 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 		sn     = feeds[0].Get("feed.sn").String()
 		liveID = feeds[0].Get("feed.relateid").String()
 	)
-	resp, err := requests.Get(apiStream, live.CommonUserAgent, requests.Queries(map[string]string{
+	resp, err := l.RequestSession.Get(apiStream, live.CommonUserAgent, requests.Queries(map[string]string{
 		"sn":     sn,
 		"uid":    uid,
 		"liveid": liveID,

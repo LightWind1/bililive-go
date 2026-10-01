@@ -4,10 +4,12 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hr3lxphr6j/bililive-go/src/instance"
-	"github.com/hr3lxphr6j/bililive-go/src/interfaces"
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/events"
+	"github.com/bililive-go/bililive-go/src/configs"
+	"github.com/bililive-go/bililive-go/src/instance"
+	"github.com/bililive-go/bililive-go/src/interfaces"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/pkg/events"
+	"github.com/bililive-go/bililive-go/src/types"
 )
 
 // for test
@@ -15,7 +17,7 @@ var newListener = NewListener
 
 func NewManager(ctx context.Context) Manager {
 	lm := &manager{
-		savers: make(map[live.ID]Listener),
+		savers: make(map[types.LiveID]Listener),
 	}
 	instance.GetInstance(ctx).ListenerManager = lm
 	return lm
@@ -24,41 +26,56 @@ func NewManager(ctx context.Context) Manager {
 type Manager interface {
 	interfaces.Module
 	AddListener(ctx context.Context, live live.Live) error
-	RemoveListener(ctx context.Context, liveId live.ID) error
-	GetListener(ctx context.Context, liveId live.ID) (Listener, error)
-	HasListener(ctx context.Context, liveId live.ID) bool
+	RemoveListener(ctx context.Context, liveId types.LiveID) error
+	GetListener(ctx context.Context, liveId types.LiveID) (Listener, error)
+	HasListener(ctx context.Context, liveId types.LiveID) bool
 }
 
 type manager struct {
 	lock   sync.RWMutex
-	savers map[live.ID]Listener
+	savers map[types.LiveID]Listener
 }
 
 func (m *manager) registryListener(ctx context.Context, ed events.Dispatcher) {
 	ed.AddEventListener(RoomInitializingFinished, events.NewEventListener(func(event *events.Event) {
 		param := event.Object.(live.InitializingFinishedParam)
 		initializingLive := param.InitializingLive
-		live := param.Live
+		originalLive := param.Live
 		info := param.Info
 		if info.CustomLiveId != "" {
-			live.SetLiveIdByString(info.CustomLiveId)
+			originalLive.SetLiveIdByString(info.CustomLiveId)
 		}
 		inst := instance.GetInstance(ctx)
-		logger := inst.Logger
-		inst.Lives[live.GetLiveId()] = live
+		logger := originalLive.GetLogger()
 
-		room, err := inst.Config.GetLiveRoomByUrl(live.GetRawUrl())
+		// 将原始 Live 包装为 WrappedLive（使用全局缓存）
+		// 传入 ctx 以便调度器可以被统一取消
+		oldLiveId := initializingLive.GetLiveId()
+		wrappedLive := live.NewWrappedLive(ctx, originalLive, inst.Cache)
+
+		// 原子地替换 Lives map 中的条目（删除旧 InitializingLive，添加新 wrappedLive）
+		inst.Lives.ReplaceKey(oldLiveId, wrappedLive.GetLiveId(), wrappedLive)
+
+		// 将已有的 info 注入新的 WrappedLive，避免 listener 交接后立即重复请求平台，
+		// 同时让新调度器从本次成功请求开始计算下一轮间隔。
+		info.Live = wrappedLive
+		if err := wrappedLive.(*live.WrappedLive).SeedInfo(info); err != nil {
+			logger.WithError(err).Warn("failed to cache info for new live")
+		}
+
+		cfg := configs.GetCurrentConfig()
+		room, err := cfg.GetLiveRoomByUrl(wrappedLive.GetRawUrl())
 		if err != nil {
-			logger.WithFields(map[string]interface{}{
-				"room": live.GetRawUrl(),
+			logger.WithFields(map[string]any{
+				"room": wrappedLive.GetRawUrl(),
 			}).Error(err)
 			panic(err)
 		}
-		room.LiveId = live.GetLiveId()
+		configs.SetLiveRoomId(wrappedLive.GetRawUrl(), wrappedLive.GetLiveId())
 		if room.IsListening {
-			if err := m.replaceListener(ctx, initializingLive, live); err != nil {
-				logger.WithFields(map[string]interface{}{
-					"url": live.GetRawUrl(),
+			if err := m.replaceListener(ctx, initializingLive, wrappedLive, info); err != nil {
+				logger.WithFields(map[string]any{
+					"url": wrappedLive.GetRawUrl(),
 				}).Error(err)
 			}
 		}
@@ -67,7 +84,7 @@ func (m *manager) registryListener(ctx context.Context, ed events.Dispatcher) {
 
 func (m *manager) Start(ctx context.Context) error {
 	inst := instance.GetInstance(ctx)
-	if inst.Config.RPC.Enable || len(inst.Lives) > 0 {
+	if cfg := configs.GetCurrentConfig(); (cfg != nil && cfg.RPC.Enable) || inst.Lives.Len() > 0 {
 		inst.WaitGroup.Add(1)
 	}
 	m.registryListener(ctx, inst.EventDispatcher.(events.Dispatcher))
@@ -97,7 +114,7 @@ func (m *manager) AddListener(ctx context.Context, live live.Live) error {
 	return listener.Start()
 }
 
-func (m *manager) RemoveListener(ctx context.Context, liveId live.ID) error {
+func (m *manager) RemoveListener(ctx context.Context, liveId types.LiveID) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	listener, ok := m.savers[liveId]
@@ -109,7 +126,7 @@ func (m *manager) RemoveListener(ctx context.Context, liveId live.ID) error {
 	return nil
 }
 
-func (m *manager) replaceListener(ctx context.Context, oldLive live.Live, newLive live.Live) error {
+func (m *manager) replaceListener(ctx context.Context, oldLive live.Live, newLive live.Live, info *live.Info) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	oldLiveId := oldLive.GetLiveId()
@@ -117,7 +134,8 @@ func (m *manager) replaceListener(ctx context.Context, oldLive live.Live, newLiv
 	if !ok {
 		return ErrListenerNotExist
 	}
-	oldListener.Close()
+	// 必须等旧 ListenStop 的录制器清理完成后，才能让新 listener 发布 LiveStart。
+	oldListener.CloseSync()
 	newListener := newListener(ctx, newLive)
 	if oldLiveId == newLive.GetLiveId() {
 		m.savers[oldLiveId] = newListener
@@ -125,10 +143,10 @@ func (m *manager) replaceListener(ctx context.Context, oldLive live.Live, newLiv
 		delete(m.savers, oldLiveId)
 		m.savers[newLive.GetLiveId()] = newListener
 	}
-	return newListener.Start()
+	return newListener.StartWithInfo(info)
 }
 
-func (m *manager) GetListener(ctx context.Context, liveId live.ID) (Listener, error) {
+func (m *manager) GetListener(ctx context.Context, liveId types.LiveID) (Listener, error) {
 	m.lock.RLock()
 	defer m.lock.RUnlock()
 	listener, ok := m.savers[liveId]
@@ -138,7 +156,7 @@ func (m *manager) GetListener(ctx context.Context, liveId live.ID) (Listener, er
 	return listener, nil
 }
 
-func (m *manager) HasListener(ctx context.Context, liveId live.ID) bool {
+func (m *manager) HasListener(ctx context.Context, liveId types.LiveID) bool {
 	m.lock.RLock()
 	defer m.lock.RUnlock()
 	_, ok := m.savers[liveId]

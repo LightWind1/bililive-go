@@ -1,0 +1,9 @@
+/* 置于普通文档流中，与 update-banner 自然向下堆叠并把页面内容推开，
+   避免 fixed 定位导致的横幅互相重叠或遮挡页面顶部内容 */
+.ffmpeg-banner {
+  border-radius: 0;
+}
+
+.ffmpeg-banner .ant-alert-message {
+  width: 100%;
+}

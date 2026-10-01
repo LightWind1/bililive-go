@@ -2,21 +2,23 @@ package xiaohongshu
 
 import (
 	"fmt"
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
-	"github.com/hr3lxphr6j/requests"
-	"github.com/tidwall/gjson"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/live/internal"
+	"github.com/hr3lxphr6j/requests"
+	"github.com/tidwall/gjson"
 )
 
 const (
 	domain = "www.xiaohongshu.com"
 	cnName = "小红书"
 
+	roomUrl    = "https://www.xiaohongshu.com/livestream"
 	roomApiUrl = "https://www.xiaohongshu.com/api/sns/red/live/app/v1/ecology/outside/share_info"
-	streamUrl  = "http://live-play.xhscdn.com/live"
+	streamUrl  = "https://live-source-play-hw.xhscdn.com/live"
 
 	userAgent = "Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile Safari/537.36"
 )
@@ -27,9 +29,9 @@ func init() {
 
 type builder struct{}
 
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+func (b *builder) Build(url *url.URL) (live.Live, error) {
 	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
+		BaseLive: internal.NewBaseLive(url),
 	}, nil
 }
 
@@ -38,12 +40,6 @@ type Live struct {
 }
 
 func (l *Live) GetInfo() (info *live.Info, err error) {
-	headers := map[string]interface{}{
-		"User-Agent":      userAgent,
-		"Accept":          "application/json, text/plain, */*",
-		"Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
-		"Referer":         "https://www.xiaohongshu.com/hina/livestream/568979931846654360",
-	}
 	cookies := l.Options.Cookies.Cookies(l.Url)
 	cookieKVs := make(map[string]string)
 	for _, item := range cookies {
@@ -53,7 +49,14 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 	pathParts := strings.Split(l.Url.Path, "/")
 	roomId := pathParts[len(pathParts)-1]
 
-	resp, err := requests.Get(
+	headers := map[string]any{
+		"User-Agent":      userAgent,
+		"Accept":          "application/json, text/plain, */*",
+		"Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+		"Referer":         "https://www.xiaohongshu.com/hina/livestream/" + roomId,
+	}
+
+	resp, err := l.RequestSession.Get(
 		roomApiUrl,
 		requests.Query("room_id", roomId),
 		requests.Cookies(cookieKVs),
@@ -62,6 +65,7 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}
@@ -74,22 +78,29 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 		return nil, live.ErrRoomNotExist
 	}
 
-	mobileUrl := fmt.Sprintf("%s/%s.flv", streamUrl, roomId)
-	response, err := requests.Head(mobileUrl,
+	homeUrl := fmt.Sprintf("%s/%s", roomUrl, roomId)
+	response, err := l.RequestSession.Get(homeUrl,
 		requests.Cookies(cookieKVs),
 		requests.Headers(headers),
 	)
 	if err != nil {
 		return nil, err
 	}
-
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, live.ErrRoomNotExist
+	}
+	homeBody, err := response.Text()
+	if err != nil {
+		return nil, err
+	}
 	info = &live.Info{
 		Live:     l,
 		HostName: gjson.GetBytes(body, "data.host_info.nickname").String(),
 		RoomName: gjson.GetBytes(body, "data.room.name").String(),
 		// 小红书直播间开没开播，status都为0
 		//Status:   gjson.GetBytes(body, "data.room.status").Int() == 0
-		Status: response.StatusCode == http.StatusOK,
+		Status: !strings.Contains(homeBody, "直播已结束"),
 	}
 
 	return

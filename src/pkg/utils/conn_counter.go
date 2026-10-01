@@ -1,0 +1,323 @@
+package utils
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	blog "github.com/bililive-go/bililive-go/src/log"
+	"github.com/bililive-go/bililive-go/src/pkg/proxy"
+)
+
+// infoRequestTimeout 限制直播间信息及播放地址等元数据请求的总耗时。
+// http.Transport 的 ResponseHeaderTimeout 只覆盖响应头；如果服务端返回响应头后停止发送
+// body，请求仍会永久阻塞。平台级在途限制会在整个 GetInfo 期间持有唯一许可，因此必须用
+// http.Client.Timeout 同时覆盖响应体读取，确保故障请求最终返回并释放许可。
+const infoRequestTimeout = 30 * time.Second
+
+type ByteCounter struct {
+	ReadBytes  int64
+	WriteBytes int64
+}
+
+type connCounter struct {
+	net.Conn
+	ByteCounter *ByteCounter
+}
+
+func (c *connCounter) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	c.ByteCounter.ReadBytes += int64(n)
+	return
+}
+
+func (c *connCounter) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	c.ByteCounter.WriteBytes += int64(n)
+	return
+}
+
+type ConnCounterManagerType struct {
+	mapLock sync.Mutex
+	bcMap   map[string]*ByteCounter
+}
+
+var ConnCounterManager ConnCounterManagerType
+
+func (m *ConnCounterManagerType) SetConn(url string, bc *ByteCounter) {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	m.bcMap[url] = bc
+}
+
+func (m *ConnCounterManagerType) GetConnCounter(url string) *ByteCounter {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	bc, ok := m.bcMap[url]
+	if !ok {
+		return nil
+	}
+	return bc
+}
+
+// GetOrCreateConnCounter atomically gets or creates a ByteCounter for the given URL
+// This ensures thread-safety by performing the check-then-act operation atomically
+func (m *ConnCounterManagerType) GetOrCreateConnCounter(url string) *ByteCounter {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	bc, ok := m.bcMap[url]
+	if !ok {
+		bc = &ByteCounter{}
+		m.bcMap[url] = bc
+	}
+	return bc
+}
+
+// GetMapSize 返回 bcMap 当前条目数量（用于内存监控）
+func (m *ConnCounterManagerType) GetMapSize() int {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	return len(m.bcMap)
+}
+
+func (m *ConnCounterManagerType) PrintMap() {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	for url, counter := range m.bcMap {
+		blog.GetLogger().Infof("host[%s] TCP bytes received: %s, sent: %s", url,
+			FormatBytes(counter.ReadBytes), FormatBytes(counter.WriteBytes))
+	}
+}
+
+// ConnStats 表示单个主机的连接统计信息
+type ConnStats struct {
+	Host           string `json:"host"`
+	ReceivedBytes  int64  `json:"received_bytes"`
+	ReceivedFormat string `json:"received_format"`
+	SentBytes      int64  `json:"sent_bytes"`
+	SentFormat     string `json:"sent_format"`
+}
+
+// GetAllStats 返回所有主机的连接统计信息
+func (m *ConnCounterManagerType) GetAllStats() []ConnStats {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	stats := make([]ConnStats, 0, len(m.bcMap))
+	for host, counter := range m.bcMap {
+		stats = append(stats, ConnStats{
+			Host:           host,
+			ReceivedBytes:  counter.ReadBytes,
+			ReceivedFormat: FormatBytes(counter.ReadBytes),
+			SentBytes:      counter.WriteBytes,
+			SentFormat:     FormatBytes(counter.WriteBytes),
+		})
+	}
+	return stats
+}
+
+// GetStatsByHost 返回指定主机的连接统计信息，支持前缀匹配
+func (m *ConnCounterManagerType) GetStatsByHostPrefix(prefix string) []ConnStats {
+	m.mapLock.Lock()
+	defer m.mapLock.Unlock()
+	stats := make([]ConnStats, 0)
+	for host, counter := range m.bcMap {
+		if strings.Contains(host, prefix) {
+			stats = append(stats, ConnStats{
+				Host:           host,
+				ReceivedBytes:  counter.ReadBytes,
+				ReceivedFormat: FormatBytes(counter.ReadBytes),
+				SentBytes:      counter.WriteBytes,
+				SentFormat:     FormatBytes(counter.WriteBytes),
+			})
+		}
+	}
+	return stats
+}
+
+var edgesrvWarningOnce sync.Once
+
+// createTLSConfig creates a TLS configuration for the given host
+// For edgesrv.com domains, it enables weak TLS 1.2 cipher suites for compatibility
+func createTLSConfig(host string) *tls.Config {
+	if strings.HasSuffix(host, ".edgesrv.com") || host == "edgesrv.com" {
+		// Log warning only once to avoid log spam
+		edgesrvWarningOnce.Do(func() {
+			blog.GetLogger().Warnf("Enabling weak TLS 1.2 cipher suites for edgesrv.com domains. This may reduce connection security for these specific domains.")
+		})
+
+		// Enable weak TLS 1.2 cipher suites for edgesrv.com
+		// Based on SSL Labs report, edgesrv.com servers require CBC-mode RSA cipher suites
+		return &tls.Config{
+			ServerName: host,
+			MinVersion: tls.VersionTLS12,
+			CipherSuites: []uint16{
+				// Standard secure ciphers first (prefer ECDHE for forward secrecy)
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				// Weak CBC-mode RSA cipher suites for compatibility with edgesrv.com
+				tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_128_CBC_SHA256,
+			},
+		}
+	}
+	// For other domains, use default secure configuration
+	return &tls.Config{
+		ServerName: host,
+	}
+}
+
+// isTLSError checks if the error is a TLS-related error
+func isTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for specific TLS error types
+	var recordHeaderError tls.RecordHeaderError
+	if errors.As(err, &recordHeaderError) {
+		return true
+	}
+	var certVerifyErr *tls.CertificateVerificationError
+	if errors.As(err, &certVerifyErr) {
+		return true
+	}
+	// Check error message with more specific patterns to reduce false positives
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "tls: handshake") ||
+		strings.Contains(errMsg, "tls handshake") ||
+		strings.Contains(errMsg, "tls: bad certificate") ||
+		strings.Contains(errMsg, "x509: certificate") ||
+		strings.Contains(errMsg, "remote error: tls")
+}
+
+// extractHostname extracts the hostname from a network address (host:port)
+func extractHostname(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	return host
+}
+
+// createTLSDialer creates a TLS dialer function with custom TLS config and error logging
+// The returned function can be used as Transport.DialTLSContext
+func createTLSDialer(dialer *net.Dialer, withByteCounter bool, keyPrefix string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Extract hostname from addr
+		host := extractHostname(addr)
+
+		// Create TLS config
+		tlsConfig := createTLSConfig(host)
+
+		// First establish TCP connection with context support
+		rawConn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		// Perform TLS handshake
+		tlsConn := tls.Client(rawConn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			rawConn.Close()
+			// Log TLS errors with domain information
+			if isTLSError(err) {
+				blog.GetLogger().Errorf("TLS connection failed for domain %s: %v", host, err)
+			}
+			return nil, err
+		}
+
+		// Wrap with byte counter if needed
+		if withByteCounter {
+			key := keyPrefix + addr
+			byteCounter := ConnCounterManager.GetOrCreateConnCounter(key)
+			return &connCounter{Conn: tlsConn, ByteCounter: byteCounter}, nil
+		}
+
+		return tlsConn, nil
+	}
+}
+
+// newProductionTransport creates a http.Transport with production-ready configuration.
+// The caller should set DialContext and DialTLSContext fields.
+func newProductionTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+func CreateDefaultClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	transport := newProductionTransport()
+	transport.DialContext = dialer.DialContext
+	transport.DialTLSContext = createTLSDialer(dialer, false, "")
+
+	// 应用信息获取代理（这些客户端主要用于获取直播间信息等 API 请求）
+	proxy.ApplyInfoProxyToTransport(transport)
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   infoRequestTimeout,
+	}
+}
+
+func CreateDownloadClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	transport := newProductionTransport()
+	transport.DialContext = dialer.DialContext
+	transport.DialTLSContext = createTLSDialer(dialer, false, "")
+
+	proxy.ApplyDownloadProxyToTransport(transport)
+
+	return &http.Client{Transport: transport}
+}
+
+func CreateConnCounterClient() (*http.Client, error) {
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	// Plain TCP dialer with byte counter
+	dialPlain := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		// Use "plain:" prefix to distinguish from TLS connections
+		key := "plain:" + addr
+		byteCounter := ConnCounterManager.GetOrCreateConnCounter(key)
+		bc := &connCounter{Conn: conn, ByteCounter: byteCounter}
+		return bc, nil
+	}
+
+	transport := newProductionTransport()
+	transport.DialContext = dialPlain
+	// Use "tls:" prefix to distinguish from plain connections
+	transport.DialTLSContext = createTLSDialer(dialer, true, "tls:")
+
+	// 应用信息获取代理（这些客户端主要用于获取直播间信息等 API 请求）
+	proxy.ApplyInfoProxyToTransport(transport)
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   infoRequestTimeout,
+	}, nil
+}

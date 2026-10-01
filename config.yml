@@ -1,44 +1,156 @@
+# 这个配置文件内的注释是自动生成的，请不要手动修改。
+# 需要修改注释时，请在 src/configs/config_comments.go 文件内修改。
 rpc:
   enable: true
   bind: :8080
+  sse_list_threshold: 50
 debug: false
 interval: 20
 out_put_path: ./
-ffmpeg_path: # 如果此项为空，就自动在环境变量里寻找
+ffmpeg_path: "" # 如果此项为空，就自动在环境变量里寻找
 log:
   out_put_folder: ./
   save_last_log: true
   save_every_log: false
+  rotate_days: 7
 feature:
-  use_native_flv_parser: false
-live_rooms:
-# qulity参数目前仅B站启用，默认为0
-# (B站)0代表原画PRO(HEVC)优先, 其他数值为原画(AVC)
-# 原画PRO会保存为.ts文件, 原画为.flv
-# HEVC相比AVC体积更小, 减少35%体积, 画质相当, 但是B站转码有时候会崩
-- url: https://www.lang.live/room/5664344
-  is_listening: false
-- url: https://live.bilibili.com/22603245
-  is_listening: true
-  quality: 0 
+  remove_symbol_other_character: false
+# '{{ .Live.GetPlatformCNName }}/{{ .HostName | filenameFilter }}/[{{ now | date "2006-01-02 15-04-05"}}][{{ .HostName | filenameFilter }}][{{ .RoomName | filenameFilter }}].flv'
+# ./平台名称/主播名字/[时间戳][主播名字][房间名字].flv
+# https://github.com/bililive-go/bililive-go/wiki/More-Tips
 out_put_tmpl: ""
 video_split_strategies:
   on_room_name_changed: false
   max_duration: 0s
-  # 仅在 use_native_flv_parser=false 时生效
-  # 单位为字节 (byte)
-  # 有效值为正数，默认值 0 为无效
+  # 仅在使用 ffmpeg 或 bililive-recorder 下载器时生效
+  # 支持可读格式，如: 500MB, 1GB, 1.5GB, 1024KB
+  # 也支持纯数字（视为字节），如: 1073741824
+  # 有效值为正数，默认值 0 为不限制
   # 负数为非法值，程序会输出 log 提醒，并无视所设定的数值
-  max_file_size: 0
-cookies: {}
+  max_file_size: "0"
 on_record_finished:
   convert_to_mp4: false
   delete_flv_after_convert: false
-#  当 custom_commandline 的值 不为空时，convert_to_mp4 的值会被无视，
-#  而是在录制结束后直接执行 custom_commandline 中的命令。
-#  在 custom_commandline 执行结束后，程序还会继续查看 delete_flv_after_convert 的值，
-#  来判断是否需要删除原始 flv 文件。
-#  以下是一个在录制结束后将 flv 视频转换为同名 mp4 视频的示例：
-#  custom_commandline: '{{ .Ffmpeg }} -hide_banner -i "{{ .FileName }}" -c copy "{{ .FileName | trimSuffix (.FileName | ext)}}.mp4"'
   custom_commandline: ""
+  fix_flv_at_first: true
+  save_cover: false
+  cloud_upload:
+    enable: false
+    storage_name: ""
+    upload_path_tmpl: /录播归档/{{ .Platform }}/{{ .HostName }}/{{ .FileName }}
+    delete_after_upload: false
+    delete_all_after_upload: false
+  upload_timing: after_process
+  burn_subtitles: false
+  burn_subtitles_codec: libx264
+  burn_subtitles_crf: "18"
+  burn_subtitles_preset: medium
+  burn_delete_ass: false
+  burn_delete_source: false
 timeout_in_us: 60000000
+danmaku_enable: false
+danmaku:
+  font_size: 36
+  font_name: Microsoft YaHei
+  scroll_area: full
+  scroll_time: 10
+  resolution: 1920x1080
+  outline: 1
+  opacity: 128
+  record_gift: true
+  record_douyu_gift: true
+  record_douyin_gift: true
+  record_guard: true
+  record_super_chat: true
+  guard_position: bottom-left
+  sc_position: bottom-left
+live_rooms:
+  # quality参数目前仅B站启用，默认为0
+  # (B站)0代表原画PRO(HEVC)优先, 其他数值为原画(AVC)
+  # 原画PRO会保存为.ts文件, 原画为.flv
+  # HEVC相比AVC体积更小, 减少35%体积, 画质相当, 但是B站转码有时候会崩
+  - url: https://www.lang.live/room/5664344
+    is_listening: false
+    scheme: ""
+  - url: https://live.bilibili.com/22603245
+    is_listening: true
+    scheme: ""
+cookies: {}
+# 通知服务配置
+notify:
+  # 录制结束后是否推送录制文件摘要（文件数量、文件名、大小）
+  # 需要至少开启一个通知渠道（Telegram/Email/Bark）才会生效
+  send_recording_summary: false
+  telegram:
+    # 是否开启Telegram通知
+    enable: false
+    # 是否启用声音通知
+    withNotification: true
+    # Telegram机器人Token
+    botToken: ""
+    # Telegram聊天ID
+    chatID: ""
+  email:
+    # 是否开启Email通知
+    enable: false
+    # SMTP服务器地址 (例如: smtp.gmail.com, smtp.qq.com等)
+    smtpHost: smtp.qq.com
+    # SMTP服务器端口 (常用端口: 25, 465, 587)
+    smtpPort: 465
+    # 发送者邮箱地址
+    senderEmail: ""
+    # 发送者邮箱授权码或应用专用密码
+    senderPassword: ""
+    # 接收者邮箱地址 
+    recipientEmail: ""
+  ntfy:
+    enable: false
+    URL: https://ntfy.sh/xxxx
+    token: tk_xxxxxxxxx
+    tag: new
+  bark:
+    # 是否开启Bark通知(iOS)
+    enable: false
+    # Bark服务器地址，默认 https://api.day.app，支持自建
+    serverURL: https://api.day.app
+    # 设备推送密钥（在Bark App首页获取）
+    deviceKey: ""
+    # 推送铃声（可选，如 alarm、birdsong、glass 等）
+    sound: ""
+    # 通知分组名称（可选）
+    group: bililive-go
+    # 自定义图标URL（可选）
+    icon: ""
+    # 通知级别（可选）: active/timeSensitive/passive/critical
+    level: ""
+  wxpusher:
+    enable: false
+    appToken: ""
+    uids: []
+app_data_path: .appdata
+read_only_tool_folder: ""
+tool_root_folder: ""
+task_queue:
+  max_concurrent: 3
+# 代理配置（支持 HTTP 和 SOCKS5 代理）
+proxy:
+  # 通用代理开关
+  # false: 使用系统环境变量 (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+  # true: 使用下方配置的代理地址
+  enable: false
+  # 通用代理地址，支持以下格式：
+  # HTTP 代理: http://host:port 或 http://user:pass@host:port
+  # SOCKS5 代理: socks5://host:port 或 socks5://user:pass@host:port
+  # 示例: socks5://127.0.0.1:1080 (翻墙软件常用端口)
+  # 此地址同时用于信息获取和下载，除非下方单独配置了专用代理
+  url: ""
+openlist:
+  port: 5244
+  data_path: ""
+  username: ""
+  password: ""
+update:
+  auto_check: true
+  check_interval_hours: 6
+  auto_download: true
+  include_prerelease: false

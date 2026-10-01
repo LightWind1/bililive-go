@@ -3,9 +3,10 @@ package huya
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
-	"github.com/hr3lxphr6j/bililive-go/src/live"
-	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/bililive-go/bililive-go/src/live"
+	"github.com/bililive-go/bililive-go/src/pkg/utils"
 	"github.com/hr3lxphr6j/requests"
 	"github.com/tidwall/gjson"
 )
@@ -19,7 +20,7 @@ var downloaderHeadersForXingXiu = func() map[string]string {
 }()
 
 func GetInfo_ForXingXiu(l *Live, body string) (info *live.Info, err error) {
-	res, err := getJsonFromBody(body)
+	res, err := l.getJsonFromBody(body)
 	if err != nil {
 		return nil, err
 	}
@@ -53,15 +54,34 @@ func GetStreamInfos_ForXingXiu(l *Live) (infos []*live.StreamUrlInfo, err error)
 		return nil, err
 	}
 
-	data, err := getJsonFromBody(body)
+	data, err := l.getJsonFromBody(body)
 	if err != nil {
 		return nil, err
 	}
-	sFlvUrl := data.Get("data.stream.baseSteamInfoList.0.sFlvUrl").String()
-	sStreamName := data.Get("data.stream.baseSteamInfoList.0.sStreamName").String()
-	sFlvUrlSuffix := data.Get("data.stream.baseSteamInfoList.0.sFlvUrlSuffix").String()
-	sFlvAntiCode := data.Get("data.stream.baseSteamInfoList.0.sFlvAntiCode").String()
+
+	streamInfoList := data.Get("data.stream.baseSteamInfoList").Array()
+	if len(streamInfoList) == 0 {
+		return nil, fmt.Errorf("streamInfoList 为空")
+	}
+	streamInfoObj := streamInfoList[0]
+	for _, info := range streamInfoList {
+		// 优先使用 TX cdn
+		if info.Get("sCdnType").String() == "TX" {
+			streamInfoObj = info
+			break
+		}
+	}
+	sFlvUrl := streamInfoObj.Get("sFlvUrl").String()
+	sStreamName := streamInfoObj.Get("sStreamName").String()
+	sFlvUrlSuffix := streamInfoObj.Get("sFlvUrlSuffix").String()
+	sFlvAntiCode := streamInfoObj.Get("sFlvAntiCode").String()
 	streamUrl := fmt.Sprintf("%s/%s.%s?%s", sFlvUrl, sStreamName, sFlvUrlSuffix, sFlvAntiCode)
+
+	// 如果选择的是 TX，执行额外的字符串替换
+	if streamInfoObj.Get("sCdnType").String() == "TX" {
+		streamUrl = strings.Replace(streamUrl, "&ctype=tars_mp", "&ctype=huya_webh5", 1)
+		streamUrl = strings.Replace(streamUrl, "&fs=bhct", "&fs=bgct", 1)
+	}
 
 	res, err := utils.GenUrls(streamUrl)
 	if err != nil {
@@ -71,7 +91,7 @@ func GetStreamInfos_ForXingXiu(l *Live) (infos []*live.StreamUrlInfo, err error)
 	return infos, nil
 }
 
-func getJsonFromBody(htmlBody string) (result *gjson.Result, err error) {
+func (l *Live) getJsonFromBody(htmlBody string) (result *gjson.Result, err error) {
 	strFilter := utils.NewStringFilterChain(utils.ParseUnicode, utils.UnescapeHTMLEntity)
 	rjson := strFilter.Do(utils.Match1(`stream: (\{"data".*?),"iWebDefaultBitRate"`, htmlBody)) + "}"
 	gj := gjson.Parse(rjson)
@@ -83,15 +103,16 @@ func getJsonFromBody(htmlBody string) (result *gjson.Result, err error) {
 	params["roomid"] = roomId
 	params["showSecret"] = "1"
 
-	headers := make(map[string]interface{})
+	headers := make(map[string]any)
 	headers["User-Agent"] = uaForXingXiu
 	headers["xweb_xhr"] = "1"
 	headers["referer"] = "https://servicewechat.com/wx74767bf0b684f7d3/301/page-frame.html"
 	headers["accept-language"] = "zh-CN,zh;q=0.9"
-	resp, err := requests.Get("https://mp.huya.com/cache.php", requests.Headers(headers), requests.Queries(params), requests.UserAgent(uaForXingXiu))
+	resp, err := l.RequestSession.Get("https://mp.huya.com/cache.php", requests.Headers(headers), requests.Queries(params), requests.UserAgent(uaForXingXiu))
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, live.ErrRoomNotExist
 	}

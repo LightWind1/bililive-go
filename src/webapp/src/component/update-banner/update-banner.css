@@ -1,0 +1,21 @@
+/* 更新横幅样式：置于普通文档流中，与 ffmpeg-banner 自然堆叠、不遮挡页面内容 */
+.update-banner {
+  border-radius: 0;
+}
+
+.update-banner .ant-alert-message {
+  width: 100%;
+}
+
+.update-banner .ant-progress {
+  max-width: 300px;
+}
+
+/* 更新模态框内容 */
+.update-modal-content {
+  padding: 8px 0;
+}
+
+.update-modal-content .ant-typography {
+  margin-bottom: 0;
+}

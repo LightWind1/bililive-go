@@ -42,3 +42,39 @@ func TestDispatchEvent(t *testing.T) {
 	time.Sleep(time.Second)
 	assert.Equal(t, []int{0, 1, 2, 3}, l)
 }
+
+func TestDispatchEventSyncWaitsForHandlers(t *testing.T) {
+	d := NewDispatcher(context.Background()).(*dispatcher)
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	dispatchDone := make(chan struct{})
+
+	d.AddEventListener("test", NewEventListener(func(event *Event) {
+		close(handlerStarted)
+		<-releaseHandler
+	}))
+
+	go func() {
+		d.DispatchEventSync(NewEvent("test", nil))
+		close(dispatchDone)
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("同步事件处理器未启动")
+	}
+
+	select {
+	case <-dispatchDone:
+		t.Fatal("同步派发在事件处理器完成前返回")
+	default:
+	}
+
+	close(releaseHandler)
+	select {
+	case <-dispatchDone:
+	case <-time.After(time.Second):
+		t.Fatal("同步派发未在事件处理器完成后返回")
+	}
+}

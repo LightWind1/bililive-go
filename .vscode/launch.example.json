@@ -1,0 +1,147 @@
+// VS Code 调试配置模板
+// 使用方法：复制此文件为 launch.json（即去掉 .example 后缀）
+// 你可以在 launch.json 中自由添加或修改配置，不会影响仓库
+//
+// ⚠️ 调试器要求：Go 1.25+ 默认生成 DWARFv5 调试符号，需要更新 Delve：
+//    go install github.com/go-delve/delve/cmd/dlv@latest
+//    如果调试时报错 "DWARFv5 or later"，请运行上述命令更新 Delve。
+{
+  "version": "0.1.0",
+  "configurations": [
+    // ========== 主程序调试配置 ==========
+    // 调试主程序（推荐：使用增量编译，只在源码变化时重新编译）
+    {
+      "name": "🚀 Debug Main Program",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/bin/bililive-dev",
+      "windows": {
+        "program": "${workspaceFolder}/bin/bililive-dev.exe"
+      },
+      "args": [
+        "-c",
+        "${workspaceFolder}/config.yml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "dev-incremental"
+    },
+    // 直接从源码调试（无需预编译，使用 VS Code 自动编译）
+    {
+      "name": "Debug Main Program (Source)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/src/cmd/bililive",
+      "args": [
+        "-c",
+        "${workspaceFolder}/config.yml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "buildFlags": "-tags=dev"
+    },
+    // 附加到正在运行的进程
+    {
+      "name": "Attach to Process",
+      "type": "go",
+      "request": "attach",
+      "mode": "local",
+      "processId": "${command:pickProcess}"
+    },
+    // ========== 本地自动升级测试配置 ==========
+    // 启动 Mock 版本 API 服务器
+    {
+      "name": "Mock Version API Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/test/update-mock-server",
+      "args": [
+        "-port",
+        "8888",
+        "-version",
+        "99.0.0"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "MOCK_CHANGELOG": "这是一个测试版本更新\n\n## 更新内容\n- 修复若干 Bug\n- 添加新功能"
+      }
+    },
+    // 调试主程序更新检测（使用本地 Mock API）
+    // 使用增量编译的可调试二进制，通过环境变量覆盖 API 地址
+    {
+      "name": "Debug Main Program (Local Update Test)",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/bin/bililive-dev",
+      "windows": {
+        "program": "${workspaceFolder}/bin/bililive-dev.exe"
+      },
+      "args": [
+        "-c",
+        "${workspaceFolder}/config.yml"
+      ],
+      "env": {
+        "VERSION_API_URL": "http://localhost:8888/api/versions"
+      },
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "dev-incremental"
+    },
+    // 调试 Launcher（使用本地 Mock API）
+    // 注意：需要先创建 test/launcher-config-local.json，可参考 test/launcher-config-local.example.json
+    {
+      "name": "Debug Launcher (Local Update)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/src/cmd/launcher",
+      "args": [
+        "-config",
+        "${workspaceFolder}/test/launcher-config-local.json",
+        "-verbose"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    // 调试主程序（模拟由 Launcher 启动）
+    {
+      "name": "Debug Main Program (with Launcher)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/src/cmd/bililive",
+      "args": [
+        "-c",
+        "${workspaceFolder}/config.yml"
+      ],
+      "env": {
+        "BILILIVE_LAUNCHER": "1",
+        "BILILIVE_INSTANCE_ID": "debug"
+      },
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "compounds": [
+    // 一键启动：主程序更新测试（Mock API + 主程序）
+    // 用于测试主程序的版本检测、下载、SHA256验证等流程
+    {
+      "name": "🔄 主程序更新测试 (Mock API + Main Program)",
+      "configurations": [
+        "Mock Version API Server",
+        "Debug Main Program (Local Update Test)"
+      ],
+      "preLaunchTask": "dev-incremental",
+      "stopAll": true
+    },
+    // 一键启动本地升级测试环境（Mock API + Launcher）
+    // 用于测试 Launcher 的解压、替换、回滚等流程
+    {
+      "name": "🚀 本地升级测试 (Mock API + Launcher)",
+      "configurations": [
+        "Mock Version API Server",
+        "Debug Launcher (Local Update)"
+      ],
+      "stopAll": true
+    }
+  ]
+}

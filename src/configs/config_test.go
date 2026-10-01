@@ -2,8 +2,11 @@ package configs
 
 import (
 	"os"
+	"sync"
 	"testing"
 
+	"github.com/bililive-go/bililive-go/src/pkg/ratelimit"
+	"github.com/bililive-go/bililive-go/src/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,6 +34,7 @@ func TestConfig_Verify(t *testing.T) {
 		RPC:        defaultRPC,
 		Interval:   30,
 		OutPutPath: os.TempDir(),
+		Danmaku:    defaultDanmakuConfig,
 	}
 	assert.NoError(t, cfg.Verify())
 	cfg.Interval = 0
@@ -41,4 +45,389 @@ func TestConfig_Verify(t *testing.T) {
 	cfg.OutPutPath = os.TempDir()
 	cfg.RPC.Enable = false
 	assert.Error(t, cfg.Verify())
+}
+
+func TestResolveConfigForRoom(t *testing.T) {
+	cfg := &Config{
+		Interval:   60,
+		OutPutPath: "/global",
+		FfmpegPath: "/usr/bin/ffmpeg",
+		PlatformConfigs: map[string]PlatformConfig{
+			"douyin": {
+				OverridableConfig: OverridableConfig{
+					Interval:   intPtr(30),
+					OutPutPath: stringPtr("/douyin"),
+				},
+			},
+		},
+	}
+
+	room := &LiveRoom{
+		Url: "https://live.douyin.com/123456",
+		OverridableConfig: OverridableConfig{
+			Interval: intPtr(15),
+		},
+	}
+
+	resolved := cfg.ResolveConfigForRoom(room, "douyin")
+
+	// Room-level override should take precedence
+	assert.Equal(t, 15, resolved.Interval)
+	// Platform-level override should take precedence over global
+	assert.Equal(t, "/douyin", resolved.OutPutPath)
+	// Global value should be used when no override exists
+	assert.Equal(t, "/usr/bin/ffmpeg", resolved.FfmpegPath)
+}
+
+func TestGetPlatformMinAccessInterval(t *testing.T) {
+	cfg := &Config{
+		PlatformConfigs: map[string]PlatformConfig{
+			"douyin": {
+				OverridableConfig:    OverridableConfig{},
+				MinAccessIntervalSec: 5,
+			},
+		},
+	}
+
+	// Test existing platform
+	interval := cfg.GetPlatformMinAccessInterval("douyin")
+	assert.Equal(t, 5, interval)
+
+	// Test non-existing platform - returns default minimum interval of 1 second
+	interval = cfg.GetPlatformMinAccessInterval("bilibili")
+	assert.Equal(t, 1, interval) // 默认最小间隔为 1 秒，防止无限制高频访问
+}
+
+func TestPlatformRateLimitRemainsDisabledAfterConfigUpdate(t *testing.T) {
+	const roomURL = "https://live.douyin.com/123456"
+	limiter := ratelimit.GetGlobalRateLimiter()
+	t.Cleanup(func() {
+		SetCurrentConfig(NewConfig())
+	})
+
+	cfg := NewConfig()
+	cfg.LiveRooms = []LiveRoom{{Url: roomURL, IsListening: true}}
+	cfg.RefreshLiveRoomIndexCache()
+	SetCurrentConfig(cfg)
+
+	if limits := limiter.GetAllPlatformLimits(); len(limits) != 0 {
+		t.Fatalf("配置加载后平台限流应保持关闭，实际限制：%v", limits)
+	}
+
+	if _, err := SetLiveRoomId(roomURL, types.LiveID("douyin-test")); err != nil {
+		t.Fatalf("写入临时 LiveId 失败: %v", err)
+	}
+	if limits := limiter.GetAllPlatformLimits(); len(limits) != 0 {
+		t.Fatalf("临时配置更新后平台限流应保持关闭，实际限制：%v", limits)
+	}
+}
+
+// TestGetLiveRoomByUrlConcurrent 保证在共享的不可变配置快照上并发查询房间时不会
+// 触发 Go 运行时的 "concurrent map read and map write" fatal error。
+// 回归此前的 bug：GetLiveRoomByUrl 在缓存未命中时会调用 RefreshLiveRoomIndexCache
+// 写入共享快照的 map，与其它 goroutine 的读并发时导致崩溃。
+// 使用 -race 运行可进一步检测数据竞争。
+func TestGetLiveRoomByUrlConcurrent(t *testing.T) {
+	cfg := NewConfig()
+	cfg.LiveRooms = []LiveRoom{
+		{Url: "https://live.bilibili.com/1", IsListening: true},
+		{Url: "https://live.bilibili.com/2", IsListening: true},
+	}
+	cfg.RefreshLiveRoomIndexCache()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 500; j++ {
+				// 交替命中缓存与未命中（触发原先的写-回退路径）。
+				if (i+j)%2 == 0 {
+					room, err := cfg.GetLiveRoomByUrl("https://live.bilibili.com/1")
+					assert.NoError(t, err)
+					assert.Equal(t, "https://live.bilibili.com/1", room.Url)
+				} else {
+					_, err := cfg.GetLiveRoomByUrl("https://live.bilibili.com/does-not-exist")
+					assert.Error(t, err)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestBackwardsCompatibility(t *testing.T) {
+	// Test that old config files still work
+	oldConfigYaml := `
+rpc:
+  enable: true
+  bind: :8080
+debug: false
+interval: 30
+out_put_path: ./
+live_rooms:
+- url: https://live.bilibili.com/123456
+  is_listening: true
+`
+	cfg, err := NewConfigWithBytes([]byte(oldConfigYaml))
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg.PlatformConfigs)
+	assert.Equal(t, 30, cfg.Interval)
+	assert.Len(t, cfg.LiveRooms, 1)
+	assert.Equal(t, "https://live.bilibili.com/123456", cfg.LiveRooms[0].Url)
+
+	// Test that resolve works with no overrides
+	resolved := cfg.ResolveConfigForRoom(&cfg.LiveRooms[0], "bilibili")
+	assert.Equal(t, 30, resolved.Interval)
+	assert.Equal(t, "./", resolved.OutPutPath)
+}
+
+func TestGetPlatformKeyFromUrl(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://live.bilibili.com/123456", "bilibili"},
+		{"https://live.douyin.com/789", "douyin"},
+		{"https://v.douyin.com/abc", "douyin"},
+		{"https://www.douyu.com/room/123", "douyu"},
+		{"https://play.sooplive.com/mbntv", "sooplive"},
+		{"https://unknown.domain.com/room", "unknown.domain.com"},
+		{"invalid-url", ""},
+	}
+
+	for _, test := range tests {
+		result := GetPlatformKeyFromUrl(test.url)
+		assert.Equal(t, test.expected, result, "URL: %s", test.url)
+	}
+}
+
+func TestSetCookieDeletesEmptyCookie(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Cookies = map[string]string{
+		"play.sooplive.com": "SESS=abc",
+	}
+	SetCurrentConfig(cfg)
+
+	newCfg, err := SetCookie("play.sooplive.com", "")
+	assert.NoError(t, err)
+	assert.NotNil(t, newCfg)
+	_, exists := newCfg.Cookies["play.sooplive.com"]
+	assert.False(t, exists)
+}
+
+func TestNormalizeLiveRoomUrl(t *testing.T) {
+	assert.Equal(t, "https://www.douyu.com/123", NormalizeLiveRoomUrl("https://m.douyu.com/123"))
+	// 非别名域名原样返回
+	assert.Equal(t, "https://live.douyin.com/456", NormalizeLiveRoomUrl("https://live.douyin.com/456"))
+	assert.Equal(t, "not a url", NormalizeLiveRoomUrl("not a url"))
+	// 抖音首页 query 形态 → 规范长链
+	assert.Equal(t, "https://live.douyin.com/670024121496",
+		NormalizeLiveRoomUrl("https://live.douyin.com/?live_web_rid=670024121496"))
+	assert.Equal(t, "https://live.douyin.com/670024121496",
+		NormalizeLiveRoomUrl("https://live.douyin.com/?activity_name=x&anchor_id=123&live_web_rid=670024121496&z=1"))
+	assert.Equal(t, "https://live.douyin.com/670024121496",
+		NormalizeLiveRoomUrl("https://live.douyin.com?live_web_rid=670024121496"))
+	// 已有 path 房间号时不覆盖 query
+	assert.Equal(t, "https://live.douyin.com/456?live_web_rid=789",
+		NormalizeLiveRoomUrl("https://live.douyin.com/456?live_web_rid=789"))
+	// 无 live_web_rid / 非数字值 / 只认 live_web_rid 不认 room_id，均原样返回
+	assert.Equal(t, "https://live.douyin.com/?room_id=7688588152885267238",
+		NormalizeLiveRoomUrl("https://live.douyin.com/?room_id=7688588152885267238"))
+	assert.Equal(t, "https://live.douyin.com/?live_web_rid=abc123",
+		NormalizeLiveRoomUrl("https://live.douyin.com/?live_web_rid=abc123"))
+	assert.Equal(t, "https://live.douyin.com/?live_web_rid=",
+		NormalizeLiveRoomUrl("https://live.douyin.com/?live_web_rid="))
+	assert.Equal(t, "https://live.douyin.com/", NormalizeLiveRoomUrl("https://live.douyin.com/"))
+}
+
+// 手动编辑配置写入 m.douyu.com 房间时，加载阶段应规范化为 www.douyu.com
+func TestNewConfigPostProcessNormalizesAliasRoom(t *testing.T) {
+	cfg := &Config{LiveRooms: []LiveRoom{
+		{Url: "https://m.douyu.com/9999"},
+		{Url: "https://live.douyin.com/1111"},
+	}}
+	newConfigPostProcess(cfg)
+	assert.Equal(t, "https://www.douyu.com/9999", cfg.LiveRooms[0].Url)
+	assert.Equal(t, "https://live.douyin.com/1111", cfg.LiveRooms[1].Url)
+}
+
+// 规范化后撞成同一 URL 的存量条目（升级前保存的坏形态 + 正常长链）必须去重，避免双录
+func TestNewConfigPostProcessDedupesNormalizedRooms(t *testing.T) {
+	// 抖音：query 形态与长链并存 → 合并为一条
+	cfg := &Config{LiveRooms: []LiveRoom{
+		{Url: "https://live.douyin.com/?live_web_rid=670024121496", IsListening: true},
+		{Url: "https://live.douyin.com/670024121496", IsListening: true},
+		{Url: "https://live.douyin.com/73832228797", IsListening: true},
+	}}
+	newConfigPostProcess(cfg)
+	assert.Len(t, cfg.LiveRooms, 2)
+	assert.Equal(t, "https://live.douyin.com/670024121496", cfg.LiveRooms[0].Url)
+	assert.True(t, cfg.LiveRooms[0].IsListening)
+	assert.Equal(t, "https://live.douyin.com/73832228797", cfg.LiveRooms[1].Url)
+
+	// 斗鱼：别名形态与标准形态并存 → 合并为一条
+	cfg = &Config{LiveRooms: []LiveRoom{
+		{Url: "https://m.douyu.com/123"},
+		{Url: "https://www.douyu.com/123", IsListening: true},
+	}}
+	newConfigPostProcess(cfg)
+	assert.Len(t, cfg.LiveRooms, 1)
+	assert.Equal(t, "https://www.douyu.com/123", cfg.LiveRooms[0].Url)
+	// is_listening 任一为真即为真（先线条目 false，被后线 true 救回）
+	assert.True(t, cfg.LiveRooms[0].IsListening)
+
+	// notify_only 全部为真才为真：录制定单不被 notify_only 副本拖累
+	cfg = &Config{LiveRooms: []LiveRoom{
+		{Url: "https://live.douyin.com/111", IsListening: true},
+		{Url: "https://live.douyin.com/?live_web_rid=111", NotifyOnly: true},
+	}}
+	newConfigPostProcess(cfg)
+	assert.Len(t, cfg.LiveRooms, 1)
+	assert.False(t, cfg.LiveRooms[0].NotifyOnly)
+	assert.True(t, cfg.LiveRooms[0].IsListening)
+
+	// 两条都是 notify_only 时保持仅提醒
+	cfg = &Config{LiveRooms: []LiveRoom{
+		{Url: "https://live.douyin.com/222", NotifyOnly: true, IsListening: true},
+		{Url: "https://live.douyin.com/?live_web_rid=222", NotifyOnly: true, IsListening: true},
+	}}
+	newConfigPostProcess(cfg)
+	assert.Len(t, cfg.LiveRooms, 1)
+	assert.True(t, cfg.LiveRooms[0].NotifyOnly)
+}
+
+func TestHierarchicalConfigFromExistingConfig(t *testing.T) {
+	// 使用内联配置字符串测试层级配置功能，不依赖外部 config.yml 文件
+	hierarchicalConfigYaml := `
+rpc:
+  enable: true
+  bind: :8080
+debug: false
+interval: 20
+out_put_path: ./
+live_rooms:
+- url: https://live.bilibili.com/123456
+  is_listening: true
+platform_configs:
+  bilibili:
+    interval: 30
+    name: "哔哩哔哩"
+    min_access_interval_sec: 1
+  douyin:
+    interval: 15
+    name: "抖音"
+`
+	cfg, err := NewConfigWithBytes([]byte(hierarchicalConfigYaml))
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg.PlatformConfigs)
+	assert.Equal(t, 20, cfg.Interval) // 全局配置
+	assert.Equal(t, "./", cfg.OutPutPath)
+
+	// 验证平台配置已正确加载
+	assert.Len(t, cfg.PlatformConfigs, 2)
+	assert.Equal(t, 30, *cfg.PlatformConfigs["bilibili"].Interval)
+	assert.Equal(t, 15, *cfg.PlatformConfigs["douyin"].Interval)
+
+	// 测试 bilibili 平台使用平台级覆盖配置
+	room := &LiveRoom{Url: "https://live.bilibili.com/123456"}
+	resolved := cfg.ResolveConfigForRoom(room, "bilibili")
+	assert.Equal(t, 30, resolved.Interval)     // 平台级覆盖 (bilibili 有 interval: 30)
+	assert.Equal(t, "./", resolved.OutPutPath) // 使用全局设置 (无覆盖)
+
+	// 测试 douyin 平台使用平台级覆盖配置
+	roomDouyin := &LiveRoom{Url: "https://live.douyin.com/789"}
+	resolvedDouyin := cfg.ResolveConfigForRoom(roomDouyin, "douyin")
+	assert.Equal(t, 15, resolvedDouyin.Interval) // 平台级覆盖 (douyin 有 interval: 15)
+
+	// 测试没有平台配置时使用全局默认值
+	roomUnknown := &LiveRoom{Url: "https://unknown.platform.com/123"}
+	resolvedUnknown := cfg.ResolveConfigForRoom(roomUnknown, "unknown")
+	assert.Equal(t, 20, resolvedUnknown.Interval) // 使用全局默认值
+}
+
+func TestBarkConfig_Load(t *testing.T) {
+	barkConfigYaml := `
+rpc:
+  enable: true
+  bind: :8080
+interval: 20
+out_put_path: ./
+notify:
+  bark:
+    enable: true
+    serverURL: "https://my-bark.example.com"
+    deviceKey: "test_device_key_123456"
+    sound: "alarm"
+    group: "bililive-go"
+    icon: "https://example.com/icon.png"
+    level: "timeSensitive"
+`
+	cfg, err := NewConfigWithBytes([]byte(barkConfigYaml))
+	assert.NoError(t, err)
+	assert.True(t, cfg.Notify.Bark.Enable)
+	assert.Equal(t, "https://my-bark.example.com", cfg.Notify.Bark.ServerURL)
+	assert.Equal(t, "test_device_key_123456", cfg.Notify.Bark.DeviceKey)
+	assert.Equal(t, "alarm", cfg.Notify.Bark.Sound)
+	assert.Equal(t, "bililive-go", cfg.Notify.Bark.Group)
+	assert.Equal(t, "https://example.com/icon.png", cfg.Notify.Bark.Icon)
+	assert.Equal(t, "timeSensitive", cfg.Notify.Bark.Level)
+}
+
+func TestBarkConfig_BackwardCompatibility(t *testing.T) {
+	// 旧配置文件没有 bark 字段，应正常加载且使用默认值
+	oldConfigYaml := `
+rpc:
+  enable: true
+  bind: :8080
+interval: 30
+out_put_path: ./
+notify:
+  telegram:
+    enable: false
+  email:
+    enable: false
+`
+	cfg, err := NewConfigWithBytes([]byte(oldConfigYaml))
+	assert.NoError(t, err)
+	assert.False(t, cfg.Notify.Bark.Enable)
+	assert.Equal(t, "https://api.day.app", cfg.Notify.Bark.ServerURL)
+	assert.Equal(t, "bililive-go", cfg.Notify.Bark.Group)
+}
+
+func TestBarkConfig_DefaultValues(t *testing.T) {
+	cfg := NewConfig()
+	assert.False(t, cfg.Notify.Bark.Enable)
+	assert.Equal(t, "https://api.day.app", cfg.Notify.Bark.ServerURL)
+	assert.Equal(t, "bililive-go", cfg.Notify.Bark.Group)
+	assert.Equal(t, "", cfg.Notify.Bark.DeviceKey)
+	assert.Equal(t, "", cfg.Notify.Bark.Sound)
+	assert.Equal(t, "", cfg.Notify.Bark.Icon)
+	assert.Equal(t, "", cfg.Notify.Bark.Level)
+}
+
+func TestSoopLiveAuth_LoadAndSet(t *testing.T) {
+	cfgYaml := `
+rpc:
+  enable: true
+  bind: :8080
+interval: 20
+out_put_path: ./
+sooplive_auth:
+  username: "tester"
+  password: "secret"
+`
+	cfg, err := NewConfigWithBytes([]byte(cfgYaml))
+	assert.NoError(t, err)
+	assert.Equal(t, "tester", cfg.SoopLiveAuth.Username)
+	assert.Equal(t, "secret", cfg.SoopLiveAuth.Password)
+}
+
+// Helper functions for pointer conversion
+func intPtr(i int) *int {
+	return &i
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
